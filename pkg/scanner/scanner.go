@@ -31,6 +31,7 @@ import (
 	"github.com/who0xac/pinakastra/pkg/output/formatter"
 	"github.com/who0xac/pinakastra/pkg/output/terminal"
 	"github.com/who0xac/pinakastra/pkg/port"
+	"github.com/who0xac/pinakastra/pkg/scope"
 	"github.com/who0xac/pinakastra/pkg/secrets"
 	"github.com/who0xac/pinakastra/pkg/security"
 	"github.com/who0xac/pinakastra/pkg/subdomain"
@@ -56,6 +57,12 @@ type ScanConfig struct {
 	NoBruteforce  bool
 	NoPortscan    bool
 	Ports         string
+	Scope              []string // additional in-scope patterns (host, *.domain, domain)
+	ScopeFile          string   // file of in-scope patterns, one per line
+	ScopeDeny          []string // out-of-scope patterns; deny always wins
+	VerifyTLS          bool     // verify TLS certs on the exploit client
+	ExploitModel       string   // local LLM model for the exploit stage
+	ExploitConcurrency int      // max concurrent in-flight exploit requests
 }
 
 // Scanner handles the full scanning workflow
@@ -1131,20 +1138,55 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 		urlsBySubdomain[subdomain] = append(urlsBySubdomain[subdomain], line)
 	}
 
+	// Scope gate: active payloads may only be sent to in-scope hosts.
+	// Recon can discover far more than the engagement authorizes, so any
+	// host not matched by the scope is dropped here, before testing.
+	allowPatterns := append([]string{}, s.Config.Scope...)
+	if s.Config.ScopeFile != "" {
+		filePatterns, err := scope.LoadPatterns(s.Config.ScopeFile)
+		if err != nil {
+			return fmt.Errorf("failed to read scope file %q: %v", s.Config.ScopeFile, err)
+		}
+		allowPatterns = append(allowPatterns, filePatterns...)
+	}
+	matcher := scope.New(s.Config.Domain, allowPatterns, s.Config.ScopeDeny)
+
+	skipped := 0
+	for host := range urlsBySubdomain {
+		if !matcher.InScope(host) {
+			delete(urlsBySubdomain, host)
+			skipped++
+			s.log(fmt.Sprintf("Active exploitation refused for out-of-scope host: %s", host))
+		}
+	}
+	if skipped > 0 {
+		fmt.Printf("%s %s\n", terminal.Yellow("⚠"),
+			terminal.Gray(fmt.Sprintf("Scope: skipped %d out-of-scope host(s)", skipped)))
+	}
+
 	if len(urlsBySubdomain) == 0 {
-		terminal.PrintWarning("No valid URLs found - skipping active exploitation")
-		s.log("Active exploitation skipped: no valid URLs")
+		terminal.PrintWarning("No in-scope URLs found - skipping active exploitation")
+		s.log("Active exploitation skipped: no in-scope URLs")
 		return nil
 	}
 
 	// Check if Ollama is running, start if needed
 	s.ensureOllamaRunning()
 
-	// Initialize exploit scanner with faster timeout and smaller model for 8GB RAM
+	// Initialize exploit scanner. Model, request rate, in-flight concurrency,
+	// and TLS verification all come from config so the scan stays within the
+	// configured limits instead of the previous hardcoded, unlimited client.
+	model := s.Config.ExploitModel
+	if model == "" {
+		model = "deepseek-r1:7b"
+	}
 	exploitScanner := exploit.NewScanner(
 		7, // timeout in seconds (reduced for faster scanning)
-		"deepseek-r1:7b", // 7b model uses 6-7GB RAM (vs 8b which needs 8-10GB)
+		model,
 		"http://localhost:11434",
+		s.Config.RateLimit,
+		s.Config.ExploitConcurrency,
+		s.Config.VerifyTLS,
 	)
 
 	// Create exploits output directory

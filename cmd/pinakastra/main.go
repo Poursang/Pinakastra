@@ -81,6 +81,16 @@ var (
 
 	// Proxy flags
 	useTor bool
+
+	// Scope flags
+	scopePatterns []string
+	scopeFile     string
+	scopeDeny     []string
+	verifyTLS     bool
+
+	// Exploit-stage flags
+	exploitModel       string
+	exploitConcurrency int
 )
 
 var rootCmd = &cobra.Command{
@@ -131,6 +141,12 @@ var scanCmd = &cobra.Command{
 			NoBruteforce:  noBruteforce,
 			NoPortscan:    noPortscan,
 			Ports:         ports,
+			Scope:              scopePatterns,
+			ScopeFile:          scopeFile,
+			ScopeDeny:          scopeDeny,
+			VerifyTLS:          verifyTLS,
+			ExploitModel:       exploitModel,
+			ExploitConcurrency: exploitConcurrency,
 		}
 
 		// Create scanner and run
@@ -427,6 +443,16 @@ func init() {
 	// Proxy flags
 	rootCmd.PersistentFlags().BoolVar(&useTor, "use-tor", false, "Use TOR proxy")
 	scanCmd.Flags().BoolVar(&useTor, "use-tor", false, "Use TOR proxy")
+
+	// Scope flags - the target is always in scope; these extend or restrict it
+	rootCmd.PersistentFlags().StringArrayVar(&scopePatterns, "scope", nil, "Additional in-scope pattern (repeatable): host, *.domain, or domain")
+	rootCmd.PersistentFlags().StringVar(&scopeFile, "scope-file", "", "File of in-scope patterns, one per line")
+	rootCmd.PersistentFlags().StringArrayVar(&scopeDeny, "scope-deny", nil, "Out-of-scope pattern (repeatable); deny always wins")
+	rootCmd.PersistentFlags().BoolVar(&verifyTLS, "verify-tls", true, "Verify TLS certificates on the exploit client")
+
+	// Exploit-stage flags
+	rootCmd.PersistentFlags().StringVar(&exploitModel, "exploit-model", "deepseek-r1:7b", "Local LLM model for the exploit stage (Ollama name)")
+	rootCmd.PersistentFlags().IntVar(&exploitConcurrency, "exploit-concurrency", 20, "Max concurrent in-flight exploit requests")
 
 	// Custom usage template
 	rootCmd.SetUsageTemplate(usageTemplate)
