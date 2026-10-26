@@ -89,7 +89,6 @@ var (
 	verifyTLS     bool
 
 	// Exploit-stage flags
-	exploitModel       string
 	exploitConcurrency int
 	identitiesFile     string
 	jwtTokens          []string
@@ -147,7 +146,6 @@ var scanCmd = &cobra.Command{
 			ScopeFile:          scopeFile,
 			ScopeDeny:          scopeDeny,
 			VerifyTLS:          verifyTLS,
-			ExploitModel:       exploitModel,
 			ExploitConcurrency: exploitConcurrency,
 			IdentitiesFile:     identitiesFile,
 			JWTTokens:          jwtTokens,
@@ -455,7 +453,6 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&verifyTLS, "verify-tls", true, "Verify TLS certificates on the exploit client")
 
 	// Exploit-stage flags
-	rootCmd.PersistentFlags().StringVar(&exploitModel, "exploit-model", "deepseek-r1:7b", "Local LLM model for the exploit stage (Ollama name)")
 	rootCmd.PersistentFlags().IntVar(&exploitConcurrency, "exploit-concurrency", 20, "Max concurrent in-flight exploit requests")
 	rootCmd.PersistentFlags().StringVar(&identitiesFile, "identities", "", "YAML file of identities (headers + own resource URL) for IDOR/authorization testing")
 	rootCmd.PersistentFlags().StringArrayVar(&jwtTokens, "jwt", nil, "JWT to analyze offline for alg:none / weak secret (repeatable)")

@@ -61,7 +61,6 @@ type ScanConfig struct {
 	ScopeFile          string   // file of in-scope patterns, one per line
 	ScopeDeny          []string // out-of-scope patterns; deny always wins
 	VerifyTLS          bool     // verify TLS certs on the exploit client
-	ExploitModel       string   // local LLM model for the exploit stage
 	ExploitConcurrency int      // max concurrent in-flight exploit requests
 	IdentitiesFile     string   // YAML of identities for IDOR/authorization testing
 	JWTTokens          []string // JWTs to analyze offline for alg:none / weak secret
@@ -1208,20 +1207,12 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 		return nil
 	}
 
-	// Check if Ollama is running, start if needed
-	s.ensureOllamaRunning()
-
-	// Initialize exploit scanner. Model, request rate, in-flight concurrency,
-	// and TLS verification all come from config so the scan stays within the
-	// configured limits instead of the previous hardcoded, unlimited client.
-	model := s.Config.ExploitModel
-	if model == "" {
-		model = "deepseek-r1:7b"
-	}
+	// Initialize exploit scanner. Confirmation is deterministic, so no model or
+	// Ollama is needed here; request rate, in-flight concurrency, and TLS
+	// verification come from config so the scan stays within the configured
+	// limits instead of the previous hardcoded, unlimited client.
 	exploitScanner := exploit.NewScanner(
 		7, // timeout in seconds (reduced for faster scanning)
-		model,
-		"http://localhost:11434",
 		s.Config.RateLimit,
 		s.Config.ExploitConcurrency,
 		s.Config.VerifyTLS,
