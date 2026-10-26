@@ -63,6 +63,7 @@ type ScanConfig struct {
 	VerifyTLS          bool     // verify TLS certs on the exploit client
 	ExploitModel       string   // local LLM model for the exploit stage
 	ExploitConcurrency int      // max concurrent in-flight exploit requests
+	IdentitiesFile     string   // YAML of identities for IDOR/authorization testing
 }
 
 // Scanner handles the full scanning workflow
@@ -1309,6 +1310,38 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 	}
 
 	fmt.Printf("   ─────────────────────────────────────────────────────────────────────────────\n\n")
+
+	// Identity-based IDOR: when identities are configured, confirm broken
+	// object-level authorization by cross-identity access. This is the honest
+	// replacement for the old unauthenticated IDOR guessing, which could not
+	// tell an IDOR from an ordinary 200.
+	if s.Config.IdentitiesFile != "" {
+		identities, idErr := exploit.LoadIdentities(s.Config.IdentitiesFile)
+		switch {
+		case idErr != nil:
+			s.log(fmt.Sprintf("IDOR: failed to load identities: %v", idErr))
+		case len(identities) < 2:
+			s.log("IDOR: need at least two identities; skipping")
+		default:
+			for _, r := range exploitScanner.RunIDOR(s.ctx, identities) {
+				host := ""
+				if u, perr := url.Parse(r.Resource); perr == nil {
+					host = u.Host
+				}
+				allExploits = append(allExploits, exploit.Exploit{
+					Subdomain: host,
+					URL:       r.Resource,
+					VulnType:  exploit.VulnIDOR,
+					Severity:  "high",
+					Payload:   "cross-identity access: " + r.Accessor + " read " + r.Owner + "'s object",
+					Method:    "GET",
+					Evidence:  r.Evidence,
+					Impact:    "Broken object-level authorization; a user can access another user's data",
+					Verified:  true,
+				})
+			}
+		}
+	}
 
 	// Generate exploit files
 	if len(allExploits) > 0 {

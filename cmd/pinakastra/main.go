@@ -39,7 +39,7 @@ Author: %s
 // printBanner prints the colorful banner
 func printBanner() {
 	// Dark, attractive colors - using regular (darker) versions
-	cyan := color.New(color.FgCyan, color.Bold)      // Deep cyan for ASCII art
+	cyan := color.New(color.FgCyan, color.Bold)       // Deep cyan for ASCII art
 	magenta := color.New(color.FgMagenta, color.Bold) // Deep magenta for title
 	blue := color.New(color.FgBlue, color.Bold)       // Deep blue for subtitle
 	brightRed := color.New(color.FgHiRed, color.Bold) // Bright red for author (more visible)
@@ -91,6 +91,7 @@ var (
 	// Exploit-stage flags
 	exploitModel       string
 	exploitConcurrency int
+	identitiesFile     string
 )
 
 var rootCmd = &cobra.Command{
@@ -129,24 +130,25 @@ var scanCmd = &cobra.Command{
 
 		// Create scan configuration
 		config := &scanner.ScanConfig{
-			Domain:        domain,
-			OutputDir:     outputDir,
-			OutputFile:    output,
-			OutputFormats: format,
-			Mode:          mode,
-			EnableAI:      enableAI,
-			Threads:       threads,
-			RateLimit:     rateLimit,
-			UseTor:        useTor,
-			NoBruteforce:  noBruteforce,
-			NoPortscan:    noPortscan,
-			Ports:         ports,
+			Domain:             domain,
+			OutputDir:          outputDir,
+			OutputFile:         output,
+			OutputFormats:      format,
+			Mode:               mode,
+			EnableAI:           enableAI,
+			Threads:            threads,
+			RateLimit:          rateLimit,
+			UseTor:             useTor,
+			NoBruteforce:       noBruteforce,
+			NoPortscan:         noPortscan,
+			Ports:              ports,
 			Scope:              scopePatterns,
 			ScopeFile:          scopeFile,
 			ScopeDeny:          scopeDeny,
 			VerifyTLS:          verifyTLS,
 			ExploitModel:       exploitModel,
 			ExploitConcurrency: exploitConcurrency,
+			IdentitiesFile:     identitiesFile,
 		}
 
 		// Create scanner and run
@@ -341,7 +343,7 @@ var updateCmd = &cobra.Command{
 					// Build ASCII progress bar: [=====> ]
 					var bar string
 					if filledWidth > 0 {
-						bar = blue(strings.Repeat("=", filledWidth-1) + ">") + strings.Repeat(" ", emptyWidth)
+						bar = blue(strings.Repeat("=", filledWidth-1)+">") + strings.Repeat(" ", emptyWidth)
 					} else {
 						bar = strings.Repeat(" ", 50)
 					}
@@ -366,7 +368,7 @@ var updateCmd = &cobra.Command{
 		updateResult.Stderr = nil
 
 		err := updateResult.Run()
-		done <- true // Stop progress bar
+		done <- true                       // Stop progress bar
 		time.Sleep(200 * time.Millisecond) // Let progress bar finish
 
 		if err != nil {
@@ -453,6 +455,7 @@ func init() {
 	// Exploit-stage flags
 	rootCmd.PersistentFlags().StringVar(&exploitModel, "exploit-model", "deepseek-r1:7b", "Local LLM model for the exploit stage (Ollama name)")
 	rootCmd.PersistentFlags().IntVar(&exploitConcurrency, "exploit-concurrency", 20, "Max concurrent in-flight exploit requests")
+	rootCmd.PersistentFlags().StringVar(&identitiesFile, "identities", "", "YAML file of identities (headers + own resource URL) for IDOR/authorization testing")
 
 	// Custom usage template
 	rootCmd.SetUsageTemplate(usageTemplate)
