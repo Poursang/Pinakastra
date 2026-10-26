@@ -1981,7 +1981,7 @@ func (s *Scanner) runAISecurityAnalysis(outputPath string, securityResults map[s
 		}
 
 		resultText := fmt.Sprintf(
-			"[%s] %s - %s\nRisk: %s\nExploitability: %s\nCVEs: %s\n",
+			"[%s] %s\nRisk: %s\nExploitability: %s\nCVEs: %s\n",
 			result.Finding.Type,
 			result.Finding.Subdomain,
 			result.RiskLevel,
