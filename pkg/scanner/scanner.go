@@ -64,6 +64,7 @@ type ScanConfig struct {
 	ExploitModel       string   // local LLM model for the exploit stage
 	ExploitConcurrency int      // max concurrent in-flight exploit requests
 	IdentitiesFile     string   // YAML of identities for IDOR/authorization testing
+	JWTTokens          []string // JWTs to analyze offline for alg:none / weak secret
 }
 
 // Scanner handles the full scanning workflow
@@ -1340,6 +1341,24 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 					Verified:  true,
 				})
 			}
+		}
+	}
+
+	// Offline JWT analysis: flag alg:none and weak/guessable HMAC secrets in
+	// any tokens supplied with --jwt. These are properties of the token itself,
+	// so no request is made; server-side acceptance of a forged token is a
+	// separate active check not done here.
+	for _, tok := range s.Config.JWTTokens {
+		for _, f := range exploit.AnalyzeJWT(tok) {
+			allExploits = append(allExploits, exploit.Exploit{
+				VulnType: exploit.VulnJWT,
+				Severity: f.Severity,
+				Payload:  "offline JWT analysis",
+				Method:   "-",
+				Evidence: f.Issue + ": " + f.Evidence,
+				Impact:   "Token integrity can be bypassed; an attacker can forge valid tokens",
+				Verified: true,
+			})
 		}
 	}
 
