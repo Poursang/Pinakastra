@@ -92,6 +92,7 @@ var (
 	exploitConcurrency int
 	identitiesFile     string
 	jwtTokens          []string
+	oobCanaryURL       string
 )
 
 var rootCmd = &cobra.Command{
@@ -149,6 +150,7 @@ var scanCmd = &cobra.Command{
 			ExploitConcurrency: exploitConcurrency,
 			IdentitiesFile:     identitiesFile,
 			JWTTokens:          jwtTokens,
+			OOBCanaryURL:       oobCanaryURL,
 		}
 
 		// Create scanner and run
@@ -456,6 +458,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&exploitConcurrency, "exploit-concurrency", 20, "Max concurrent in-flight exploit requests")
 	rootCmd.PersistentFlags().StringVar(&identitiesFile, "identities", "", "YAML file of identities (headers + own resource URL) for IDOR/authorization testing")
 	rootCmd.PersistentFlags().StringArrayVar(&jwtTokens, "jwt", nil, "JWT to analyze offline for alg:none / weak secret (repeatable)")
+	rootCmd.PersistentFlags().StringVar(&oobCanaryURL, "oob-url", "", "Base URL of an out-of-band canary (routes /c/<token> and /hits/<token>) for blind SSRF")
 
 	// Custom usage template
 	rootCmd.SetUsageTemplate(usageTemplate)

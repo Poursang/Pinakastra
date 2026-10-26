@@ -64,6 +64,7 @@ type ScanConfig struct {
 	ExploitConcurrency int      // max concurrent in-flight exploit requests
 	IdentitiesFile     string   // YAML of identities for IDOR/authorization testing
 	JWTTokens          []string // JWTs to analyze offline for alg:none / weak secret
+	OOBCanaryURL       string   // base URL of an out-of-band canary for blind SSRF
 }
 
 // Scanner handles the full scanning workflow
@@ -1217,6 +1218,9 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 		s.Config.ExploitConcurrency,
 		s.Config.VerifyTLS,
 	)
+	if s.Config.OOBCanaryURL != "" {
+		exploitScanner.SetOOB(exploit.NewHTTPCanary(s.Config.OOBCanaryURL, nil))
+	}
 
 	// Create exploits output directory
 	exploitsDir := filepath.Join(outputPath, "exploits")
