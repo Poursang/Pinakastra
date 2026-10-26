@@ -45,18 +45,18 @@ import (
 
 // ScanConfig holds the configuration for a scan
 type ScanConfig struct {
-	Domain        string
-	OutputDir     string
-	OutputFile    string
-	OutputFormats string
-	Mode          string
-	EnableAI      bool
-	Threads       int
-	RateLimit     int
-	UseTor        bool
-	NoBruteforce  bool
-	NoPortscan    bool
-	Ports         string
+	Domain             string
+	OutputDir          string
+	OutputFile         string
+	OutputFormats      string
+	Mode               string
+	EnableAI           bool
+	Threads            int
+	RateLimit          int
+	UseTor             bool
+	NoBruteforce       bool
+	NoPortscan         bool
+	Ports              string
 	Scope              []string // additional in-scope patterns (host, *.domain, domain)
 	ScopeFile          string   // file of in-scope patterns, one per line
 	ScopeDeny          []string // out-of-scope patterns; deny always wins
@@ -67,15 +67,15 @@ type ScanConfig struct {
 
 // Scanner handles the full scanning workflow
 type Scanner struct {
-	Config           *ScanConfig
-	ctx              context.Context
-	cancel           context.CancelFunc
-	termCapture      *utils.TerminalCapture
-	scanResult       *formatter.ScanResult
-	startTime        time.Time
-	interruptCount   int32          // Atomic counter for Ctrl+C presses
-	lastInterruptTime time.Time      // Time of last interrupt
-	skipPhase        chan struct{}  // Channel to signal phase skip
+	Config            *ScanConfig
+	ctx               context.Context
+	cancel            context.CancelFunc
+	termCapture       *utils.TerminalCapture
+	scanResult        *formatter.ScanResult
+	startTime         time.Time
+	interruptCount    int32         // Atomic counter for Ctrl+C presses
+	lastInterruptTime time.Time     // Time of last interrupt
+	skipPhase         chan struct{} // Channel to signal phase skip
 }
 
 // Color helpers
@@ -89,14 +89,14 @@ func NewScanner(config *ScanConfig) *Scanner {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	scanner := &Scanner{
-		Config:           config,
-		ctx:              ctx,
-		cancel:           cancel,
-		termCapture:      utils.NewTerminalCapture(),
-		startTime:        time.Now(),
-		interruptCount:   0,
+		Config:            config,
+		ctx:               ctx,
+		cancel:            cancel,
+		termCapture:       utils.NewTerminalCapture(),
+		startTime:         time.Now(),
+		interruptCount:    0,
 		lastInterruptTime: time.Time{},
-		skipPhase:        make(chan struct{}, 1),
+		skipPhase:         make(chan struct{}, 1),
 	}
 
 	// Set up signal handling for Ctrl+C
@@ -201,6 +201,36 @@ func (s *Scanner) Run() error {
 		if err != nil {
 			return fmt.Errorf("subdomain enumeration failed: %v", err)
 		}
+	}
+
+	// Scope gate for active recon: drop any discovered host outside the
+	// engagement boundary before it is probed, resolved, crawled, or port
+	// scanned. The target is always in scope; --scope/--scope-file widen it.
+	// The exploitation phase enforces this again as defense in depth.
+	if len(subdomains) > 0 {
+		matcher, mErr := s.buildScopeMatcher()
+		if mErr != nil {
+			return mErr
+		}
+		inScope := make([]string, 0, len(subdomains))
+		for _, h := range subdomains {
+			if matcher.InScope(h) {
+				inScope = append(inScope, h)
+			}
+		}
+		if dropped := len(subdomains) - len(inScope); dropped > 0 {
+			fmt.Printf("%s %s\n", terminal.Yellow("⚠"),
+				terminal.Gray(fmt.Sprintf("Scope: dropped %d out-of-scope host(s) from recon", dropped)))
+			s.log(fmt.Sprintf("Scope: dropped %d out-of-scope host(s) from recon", dropped))
+		}
+		subdomains = inScope
+		// Rewrite the subdomain file so downstream tools that read it (httpx
+		// and the rest) only ever see in-scope hosts.
+		if err := writeLinesToFile(filepath.Join(outputPath, "all_subdomains.txt"), subdomains); err != nil {
+			return fmt.Errorf("failed to rewrite in-scope subdomains: %v", err)
+		}
+		s.scanResult.Subdomains.Subdomains = subdomains
+		s.scanResult.Subdomains.UniqueCount = len(subdomains)
 	}
 
 	// Phase 2: HTTP Probing
@@ -399,7 +429,6 @@ func (s *Scanner) runHTTPProbing(outputPath string, subdomains []string) ([]stri
 	}
 	s.scanResult.HTTPProbe.LiveURLs = liveURLs
 
-
 	return result.LiveURLs, nil
 }
 
@@ -468,7 +497,6 @@ func (s *Scanner) runIPResolution(outputPath string) (map[string][]string, error
 		}
 	}
 
-
 	// Print completion summary
 	fmt.Println()
 	terminal.PrintSectionDivider()
@@ -476,7 +504,6 @@ func (s *Scanner) runIPResolution(outputPath string) (map[string][]string, error
 	terminal.PrintSuccess(fmt.Sprintf("IP Resolution completed in %s", duration.Round(time.Second)))
 	terminal.PrintInfo(fmt.Sprintf("Resolved %d unique IPs", len(result.ResolvedIPs)))
 	fmt.Println()
-
 
 	return result.ResolvedIPs, nil
 }
@@ -540,20 +567,19 @@ func (s *Scanner) runURLDiscovery(outputPath string) ([]string, error) {
 
 	_ = phaseStart
 
-
 	return urls, nil
 }
 
 // subdomainAnalysisResult holds all analysis results for a subdomain
 type subdomainAnalysisResult struct {
-	subdomain        string
-	info             terminal.SubdomainInfo
-	findings         int
-	criticalCount    int
-	highCount        int
-	moderateCount    int
-	lowCount         int
-	output           []string // Buffered output lines
+	subdomain     string
+	info          terminal.SubdomainInfo
+	findings      int
+	criticalCount int
+	highCount     int
+	moderateCount int
+	lowCount      int
+	output        []string // Buffered output lines
 }
 
 // testResult holds individual test results
@@ -1095,8 +1121,23 @@ func (s *Scanner) runPortScan(outputPath string) error {
 	s.log(fmt.Sprintf("Port scan completed: %d open ports, %d vulnerabilities found",
 		result.OpenPorts, totalVulns))
 
-
 	return nil
+}
+
+// buildScopeMatcher constructs the engagement scope from config: the target is
+// always in scope, --scope and --scope-file widen it, --scope-deny restricts
+// it (deny wins). Shared by the recon gate and the exploitation gate so both
+// enforce exactly the same boundary.
+func (s *Scanner) buildScopeMatcher() (*scope.Matcher, error) {
+	allow := append([]string{}, s.Config.Scope...)
+	if s.Config.ScopeFile != "" {
+		filePatterns, err := scope.LoadPatterns(s.Config.ScopeFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read scope file %q: %v", s.Config.ScopeFile, err)
+		}
+		allow = append(allow, filePatterns...)
+	}
+	return scope.New(s.Config.Domain, allow, s.Config.ScopeDeny), nil
 }
 
 // runActiveExploitation runs Phase 7: Active Exploitation with AI
@@ -1141,15 +1182,10 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 	// Scope gate: active payloads may only be sent to in-scope hosts.
 	// Recon can discover far more than the engagement authorizes, so any
 	// host not matched by the scope is dropped here, before testing.
-	allowPatterns := append([]string{}, s.Config.Scope...)
-	if s.Config.ScopeFile != "" {
-		filePatterns, err := scope.LoadPatterns(s.Config.ScopeFile)
-		if err != nil {
-			return fmt.Errorf("failed to read scope file %q: %v", s.Config.ScopeFile, err)
-		}
-		allowPatterns = append(allowPatterns, filePatterns...)
+	matcher, err := s.buildScopeMatcher()
+	if err != nil {
+		return err
 	}
-	matcher := scope.New(s.Config.Domain, allowPatterns, s.Config.ScopeDeny)
 
 	skipped := 0
 	for host := range urlsBySubdomain {
@@ -1290,7 +1326,6 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 	if len(allExploits) > 0 {
 		fmt.Printf("\n%s Exploit reports saved to: %s\n", terminal.Blue("ℹ"), terminal.Cyan(exploitsDir))
 	}
-
 
 	return nil
 }
@@ -1535,7 +1570,6 @@ func (s *Scanner) runPhase7DeepAIAnalysis(outputPath string, subdomains []string
 	terminal.PrintSuccess(fmt.Sprintf("Deep AI Security Analysis completed in %s", time.Since(scanStart)))
 	terminal.PrintSectionDivider()
 	fmt.Println()
-
 
 	return nil
 }
@@ -2043,21 +2077,21 @@ func (s *Scanner) shutdownOllama() {
 
 // SubdomainSecurityData holds all security check results for a subdomain
 type SubdomainSecurityData struct {
-	Subdomain       string
-	StatusCode      int
-	HeadersGrade    string
-	MissingHeaders  []string
-	HeadersRisk     string
-	TLSVulns        []string
-	TLSRisk         string
-	TakeoverVuln    *takeover.Vulnerability
-	TakeoverRisk    string
-	CloudAssets     []cloud.Asset
-	CloudRisk       string
-	CORSIssues      []cors.Issue
-	CORSRisk        string
-	Secrets         []secrets.Finding
-	SecretsRisk     string
+	Subdomain      string
+	StatusCode     int
+	HeadersGrade   string
+	MissingHeaders []string
+	HeadersRisk    string
+	TLSVulns       []string
+	TLSRisk        string
+	TakeoverVuln   *takeover.Vulnerability
+	TakeoverRisk   string
+	CloudAssets    []cloud.Asset
+	CloudRisk      string
+	CORSIssues     []cors.Issue
+	CORSRisk       string
+	Secrets        []secrets.Finding
+	SecretsRisk    string
 }
 
 // runIntegratedSecurityAnalysis runs security checks grouped by subdomain with real-time AI analysis
