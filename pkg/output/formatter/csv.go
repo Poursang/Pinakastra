@@ -33,9 +33,37 @@ func (c *CSVFormatter) Format(result *ScanResult) error {
 		}
 	}
 
+	// Create findings CSV
+	if len(result.Findings) > 0 {
+		if err := c.writeFindingsCSV(result); err != nil {
+			return err
+		}
+	}
+
 	// Create summary CSV
 	if err := c.writeSummaryCSV(result); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// writeFindingsCSV writes confirmed findings to CSV
+func (c *CSVFormatter) writeFindingsCSV(result *ScanResult) error {
+	outputFile := filepath.Join(c.OutputPath, "findings.csv")
+
+	file, err := os.Create(outputFile)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	writer.Write([]string{"Type", "Severity", "Verified", "URL", "Evidence", "Impact"})
+	for _, f := range result.Findings {
+		writer.Write([]string{f.Type, f.Severity, strconv.FormatBool(f.Verified), f.URL, f.Evidence, f.Impact})
 	}
 
 	return nil

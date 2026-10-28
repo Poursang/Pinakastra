@@ -92,6 +92,25 @@ func (t *TXTFormatter) Format(result *ScanResult) error {
 	}
 	fmt.Fprintf(file, "\n")
 
+	// Confirmed findings
+	fmt.Fprintf(file, "CONFIRMED FINDINGS\n")
+	fmt.Fprintf(file, "%s\n", strings.Repeat("-", 80))
+	if len(result.Findings) == 0 {
+		fmt.Fprintf(file, "None\n\n")
+	} else {
+		for _, f := range result.Findings {
+			fmt.Fprintf(file, "[%s] %s  %s\n", strings.ToUpper(f.Severity), f.Type, f.URL)
+			if f.Evidence != "" {
+				fmt.Fprintf(file, "  Evidence: %s\n", f.Evidence)
+			}
+			if f.Impact != "" {
+				fmt.Fprintf(file, "  Impact:   %s\n", f.Impact)
+			}
+			fmt.Fprintf(file, "  Verified: %v\n", f.Verified)
+		}
+		fmt.Fprintf(file, "\n")
+	}
+
 	// Terminal output
 	fmt.Fprintf(file, "TERMINAL OUTPUT\n")
 	fmt.Fprintf(file, "%s\n", strings.Repeat("-", 80))

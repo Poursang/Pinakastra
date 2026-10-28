@@ -1343,6 +1343,20 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 		}
 	}
 
+	// Surface confirmed findings in the main report, not only in exploits/.
+	for _, e := range allExploits {
+		s.scanResult.Findings = append(s.scanResult.Findings, formatter.Finding{
+			Subdomain: e.Subdomain,
+			URL:       e.URL,
+			Type:      string(e.VulnType),
+			Severity:  e.Severity,
+			Verified:  e.Verified,
+			Evidence:  e.Evidence,
+			Payload:   e.Payload,
+			Impact:    e.Impact,
+		})
+	}
+
 	// Generate exploit files
 	if len(allExploits) > 0 {
 		if err := exploit.GenerateExploitFiles(allExploits, exploitsDir); err != nil {
