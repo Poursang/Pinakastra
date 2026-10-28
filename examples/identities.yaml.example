@@ -1,0 +1,21 @@
+# Example identities file for IDOR / broken-object-level-authorization testing.
+# Pass with:  pinakastra -d target.com --identities identities.yaml
+#
+# Provide at least two identities you are authorized to use. Each needs the
+# headers that authenticate it and the URL of an object that belongs to it.
+# The oracle fetches each identity's own resource as that identity, as the
+# other identities, and anonymously, and reports IDOR only when a different
+# identity receives the owner's object that anonymous access is denied.
+
+identities:
+  - name: alice
+    resource: https://target.com/api/users/1001
+    headers:
+      Cookie: "session=ALICE_SESSION_COOKIE"
+      # Authorization: "Bearer ALICE_TOKEN"
+
+  - name: bob
+    resource: https://target.com/api/users/1002
+    headers:
+      Cookie: "session=BOB_SESSION_COOKIE"
+      # Authorization: "Bearer BOB_TOKEN"
