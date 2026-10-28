@@ -508,7 +508,7 @@ PORT SCANNING:
   --no-portscan                  Skip port scanning
 
 ACTIVE VERIFICATION (deterministic; runs without --enable-ai):
-  --verify-tls                   Verify TLS certificates on the exploit client (default: true)
+  --verify-tls                   Verify TLS certificates on active HTTP probes (default: true)
   --exploit-concurrency INT      Max concurrent in-flight exploit requests (default: 20)
   --identities STRING            YAML of identities (headers + own resource URL) for IDOR testing
   --jwt STRING                   JWT to analyze offline for alg:none / weak secret (repeatable)

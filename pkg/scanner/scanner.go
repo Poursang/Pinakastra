@@ -1623,7 +1623,7 @@ func (s *Scanner) runPhase7DeepAIAnalysis(outputPath string, subdomains []string
 
 // runTechnologyFingerprinting performs technology fingerprinting
 func (s *Scanner) runTechnologyFingerprinting(subdomains []string) map[string][]fingerprint.Technology {
-	scanner := fingerprint.NewScanner(10)
+	scanner := fingerprint.NewScanner(10, s.Config.VerifyTLS)
 	results := make(map[string][]fingerprint.Technology)
 
 	for _, subdomain := range subdomains {
@@ -1644,7 +1644,7 @@ func (s *Scanner) runTechnologyFingerprinting(subdomains []string) map[string][]
 
 // runSecurityHeadersAnalysis performs security headers analysis
 func (s *Scanner) runSecurityHeadersAnalysis(subdomains []string) map[string]*security.HeaderAnalysis {
-	analyzer := security.NewAnalyzer(10)
+	analyzer := security.NewAnalyzer(10, s.Config.VerifyTLS)
 	results := make(map[string]*security.HeaderAnalysis)
 
 	for _, subdomain := range subdomains {
@@ -1686,7 +1686,7 @@ func (s *Scanner) runTLSAnalysis(subdomains []string) map[string]*tls.Analysis {
 
 // runTakeoverDetection performs subdomain takeover detection
 func (s *Scanner) runTakeoverDetection(subdomains []string) []takeover.Vulnerability {
-	checker := takeover.NewChecker(5) // Reduced from 10s to 5s
+	checker := takeover.NewChecker(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	var vulns []takeover.Vulnerability
 
 	for _, subdomain := range subdomains {
@@ -1707,13 +1707,13 @@ func (s *Scanner) runTakeoverDetection(subdomains []string) []takeover.Vulnerabi
 
 // runCloudDiscovery performs cloud asset discovery
 func (s *Scanner) runCloudDiscovery() []cloud.Asset {
-	scanner := cloud.NewScanner(s.Config.Domain, 2) // Reduced to 2s for faster scanning
+	scanner := cloud.NewScanner(s.Config.Domain, 2, s.Config.VerifyTLS) // Reduced to 2s for faster scanning
 	return scanner.ScanAll(s.ctx)
 }
 
 // runAPIDiscovery performs API intelligence discovery
 func (s *Scanner) runAPIDiscovery(subdomains []string) map[string][]api.Finding {
-	scanner := api.NewScanner(5) // Reduced from 10s to 5s
+	scanner := api.NewScanner(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]api.Finding)
 
 	for _, subdomain := range subdomains {
@@ -1734,7 +1734,7 @@ func (s *Scanner) runAPIDiscovery(subdomains []string) map[string][]api.Finding 
 
 // runCORSDetection performs CORS misconfiguration detection
 func (s *Scanner) runCORSDetection(subdomains []string) map[string][]cors.Issue {
-	checker := cors.NewChecker(5) // Reduced from 10s to 5s
+	checker := cors.NewChecker(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]cors.Issue)
 
 	for _, subdomain := range subdomains {
@@ -1755,7 +1755,7 @@ func (s *Scanner) runCORSDetection(subdomains []string) map[string][]cors.Issue 
 
 // runSecretsScanning performs JS secrets scanning
 func (s *Scanner) runSecretsScanning(subdomains []string) map[string][]secrets.Finding {
-	scanner := secrets.NewScanner(5) // Reduced from 10s to 5s
+	scanner := secrets.NewScanner(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]secrets.Finding)
 
 	for _, subdomain := range subdomains {
@@ -2660,6 +2660,9 @@ func (s *Scanner) getTLSAltNames(domain string) ([]string, error) {
 	}
 
 	conn, err := cryptotls.DialWithDialer(dialer, "tcp", domain+":443", &cryptotls.Config{
+		// Connectivity/cert-grab probe: we test reachability and read the
+		// certificate, we do not trust it, so verification is intentionally
+		// skipped here regardless of --verify-tls.
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
@@ -2699,7 +2702,7 @@ func (s *Scanner) getTechStack(domain string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	scanner := fingerprint.NewScanner(1)
+	scanner := fingerprint.NewScanner(1, s.Config.VerifyTLS)
 	techs := scanner.DetectTechnologies(ctx, "https://"+domain)
 
 	if len(techs) == 0 {

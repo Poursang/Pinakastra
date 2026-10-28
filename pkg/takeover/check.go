@@ -18,28 +18,28 @@ type Vulnerability struct {
 	Subdomain   string `json:"subdomain"`
 	Service     string `json:"service"`
 	CNAME       string `json:"cname"`
-	Verified    bool   `json:"verified"`     // Properly verified
+	Verified    bool   `json:"verified"` // Properly verified
 	Severity    string `json:"severity"`
 	Description string `json:"description"`
-	Evidence    string `json:"evidence"`     // Response snippet proving vulnerability
+	Evidence    string `json:"evidence"` // Response snippet proving vulnerability
 }
 
 // Checker performs subdomain takeover detection
 type Checker struct {
-	client       *http.Client
-	dnsClient    *dns.Client
-	dnsServer    string
-	timeout      time.Duration
+	client    *http.Client
+	dnsClient *dns.Client
+	dnsServer string
+	timeout   time.Duration
 }
 
 // NewChecker creates a new takeover checker
-func NewChecker(timeout int) *Checker {
+func NewChecker(timeout int, verifyTLS bool) *Checker {
 	return &Checker{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,
@@ -235,9 +235,9 @@ func (c *Checker) CheckBatch(ctx context.Context, subdomains []string) []Vulnera
 func (c *Checker) VerifyTakeover(ctx context.Context, subdomain string) bool {
 	// Double-check by trying to resolve via multiple DNS servers
 	dnsServers := []string{
-		"8.8.8.8:53",   // Google
-		"1.1.1.1:53",   // Cloudflare
-		"9.9.9.9:53",   // Quad9
+		"8.8.8.8:53", // Google
+		"1.1.1.1:53", // Cloudflare
+		"9.9.9.9:53", // Quad9
 	}
 
 	cnames := make(map[string]int)

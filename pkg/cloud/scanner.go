@@ -14,12 +14,12 @@ import (
 
 // Asset represents a discovered cloud asset
 type Asset struct {
-	Type        string   `json:"type"`        // s3, gcs, azure-blob, etc.
-	Name        string   `json:"name"`        // bucket/container name
-	URL         string   `json:"url"`         // full URL
-	Provider    string   `json:"provider"`    // aws, gcp, azure, etc.
+	Type        string   `json:"type"`     // s3, gcs, azure-blob, etc.
+	Name        string   `json:"name"`     // bucket/container name
+	URL         string   `json:"url"`      // full URL
+	Provider    string   `json:"provider"` // aws, gcp, azure, etc.
 	Region      string   `json:"region,omitempty"`
-	Status      string   `json:"status"`      // public, private, exists, not_found
+	Status      string   `json:"status"`                // public, private, exists, not_found
 	Permissions []string `json:"permissions,omitempty"` // read, write, list
 	Contents    []string `json:"contents,omitempty"`    // sample file names
 	Size        int64    `json:"size,omitempty"`
@@ -28,9 +28,9 @@ type Asset struct {
 
 // Scanner discovers cloud assets
 type Scanner struct {
-	client      *http.Client
-	domain      string
-	timeout     time.Duration
+	client  *http.Client
+	domain  string
+	timeout time.Duration
 }
 
 // S3ListBucketResult represents S3 XML listing response
@@ -43,13 +43,13 @@ type S3ListBucketResult struct {
 }
 
 // NewScanner creates a new cloud scanner
-func NewScanner(domain string, timeout int) *Scanner {
+func NewScanner(domain string, timeout int, verifyTLS bool) *Scanner {
 	return &Scanner{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,
