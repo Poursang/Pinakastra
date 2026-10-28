@@ -507,7 +507,7 @@ PORT SCANNING:
   -p, --ports STRING             Ports to scan (default: 80,443,8080,8443,3000,5000,8000,8888)
   --no-portscan                  Skip port scanning
 
-ACTIVE VERIFICATION (with --enable-ai):
+ACTIVE VERIFICATION (deterministic; runs without --enable-ai):
   --verify-tls                   Verify TLS certificates on the exploit client (default: true)
   --exploit-concurrency INT      Max concurrent in-flight exploit requests (default: 20)
   --identities STRING            YAML of identities (headers + own resource URL) for IDOR testing
@@ -533,11 +533,11 @@ EXAMPLES:
   # Custom output
   pinakastra -d target.com -o my_scan -f json,html,pdf
 
-  # Restrict active testing to an explicit scope
-  pinakastra -d target.com --enable-ai --scope '*.target.com' --scope-deny prod.target.com
+  # Restrict active testing to an explicit scope (verification runs without AI)
+  pinakastra -d target.com --scope '*.target.com' --scope-deny prod.target.com
 
   # Authorization, token, and blind-SSRF testing
-  pinakastra -d target.com --enable-ai --identities ids.yaml --jwt "$TOKEN" --oob-url https://canary.example
+  pinakastra -d target.com --identities ids.yaml --jwt "$TOKEN" --oob-url https://canary.example
 
 For more information: https://github.com/who0xac/pinakastra
 `

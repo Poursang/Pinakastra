@@ -266,38 +266,23 @@ func (s *Scanner) Run() error {
 		}
 	}
 
-	// Exit early if AI is disabled (Port scanning requires AI)
-	if !s.Config.EnableAI {
-		// Finalize metadata and generate outputs before exiting
-		s.scanResult.Metadata.EndTime = time.Now()
-		s.scanResult.Metadata.Duration = s.scanResult.Metadata.EndTime.Sub(s.startTime).String()
-		s.scanResult.TerminalOutput = s.termCapture.GetLines()
-
-		if err := s.generateOutputs(outputPath); err != nil {
-			return fmt.Errorf("failed to generate outputs: %v", err)
+	// Phase 6: Port Scanning with AI analysis. This is the only phase that
+	// needs a model, so it stays behind --enable-ai (optional, skip with
+	// --no-portscan).
+	if s.Config.EnableAI {
+		if !s.Config.NoPortscan && !s.shouldSkipPhase() {
+			if err := s.runPortScan(outputPath); err != nil {
+				s.log(fmt.Sprintf("Port scan warning: %v", err))
+			}
 		}
-
-		fmt.Println()
-		terminal.PrintSectionDivider()
-		terminal.PrintSuccess(fmt.Sprintf("Scan completed! Results saved to: %s", outputPath))
-		terminal.PrintInfo("Web Security Analysis completed (100% verified data)")
-		terminal.PrintInfo("AI is disabled. Skipped: Port Scanning and AI Analysis")
-		terminal.PrintInfo("Enable with --enable-ai for AI-powered port scanning and deep analysis")
-
-		terminal.PrintSectionDivider()
-		fmt.Println()
-		return nil
+	} else {
+		terminal.PrintInfo("AI disabled: skipping AI-powered port scanning (enable with --enable-ai)")
 	}
 
-	// Phase 6: Port Scanning (requires AI, optional, skip if --no-portscan)
-	if !s.Config.NoPortscan && !s.shouldSkipPhase() {
-		if err := s.runPortScan(outputPath); err != nil {
-			s.log(fmt.Sprintf("Port scan warning: %v", err))
-		}
-	}
-
-	// Phase 7: Active Exploitation (requires AI)
-	if s.Config.EnableAI && !s.shouldSkipPhase() {
+	// Phase 7: Active Exploitation. The oracles confirm findings
+	// deterministically and use no model, so this runs regardless of
+	// --enable-ai.
+	if !s.shouldSkipPhase() {
 		if err := s.runActiveExploitation(outputPath); err != nil {
 			s.log(fmt.Sprintf("Active exploitation warning: %v", err))
 		}
@@ -1142,7 +1127,8 @@ func (s *Scanner) buildScopeMatcher() (*scope.Matcher, error) {
 	return scope.New(s.Config.Domain, allow, s.Config.ScopeDeny), nil
 }
 
-// runActiveExploitation runs Phase 7: Active Exploitation with AI
+// runActiveExploitation runs Phase 7: Active Exploitation. Confirmation is
+// deterministic and uses no model, so it does not depend on --enable-ai.
 func (s *Scanner) runActiveExploitation(outputPath string) error {
 	terminal.PrintSectionHeader("ACTIVE EXPLOITATION")
 
