@@ -483,6 +483,11 @@ COMMANDS:
 REQUIRED:
   -d, --domain STRING            Target domain to scan
 
+SCOPE:
+  --scope STRING                 Additional in-scope pattern (repeatable): host, *.domain, or domain
+  --scope-file STRING            File of in-scope patterns, one per line
+  --scope-deny STRING            Out-of-scope pattern (repeatable); deny always wins
+
 AI OPTIONS:
   --enable-ai                    Enable AI-powered port scanning and deep analysis (default: false)
 
@@ -502,6 +507,13 @@ PORT SCANNING:
   -p, --ports STRING             Ports to scan (default: 80,443,8080,8443,3000,5000,8000,8888)
   --no-portscan                  Skip port scanning
 
+ACTIVE VERIFICATION (with --enable-ai):
+  --verify-tls                   Verify TLS certificates on the exploit client (default: true)
+  --exploit-concurrency INT      Max concurrent in-flight exploit requests (default: 20)
+  --identities STRING            YAML of identities (headers + own resource URL) for IDOR testing
+  --jwt STRING                   JWT to analyze offline for alg:none / weak secret (repeatable)
+  --oob-url STRING               Base URL of an out-of-band canary for blind SSRF detection
+
 PROXY:
   --use-tor                      Use TOR proxy
 
@@ -520,6 +532,12 @@ EXAMPLES:
 
   # Custom output
   pinakastra -d target.com -o my_scan -f json,html,pdf
+
+  # Restrict active testing to an explicit scope
+  pinakastra -d target.com --enable-ai --scope '*.target.com' --scope-deny prod.target.com
+
+  # Authorization, token, and blind-SSRF testing
+  pinakastra -d target.com --enable-ai --identities ids.yaml --jwt "$TOKEN" --oob-url https://canary.example
 
 For more information: https://github.com/who0xac/pinakastra
 `
