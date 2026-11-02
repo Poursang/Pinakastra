@@ -11,14 +11,14 @@ import (
 
 // HeaderAnalysis represents security header analysis results
 type HeaderAnalysis struct {
-	Subdomain            string            `json:"subdomain"`
-	Score                int               `json:"score"` // 0-10
-	Grade                string            `json:"grade"` // A+, A, B, C, D, F
-	MissingHeaders       []string          `json:"missing_headers"`
-	PresentHeaders       map[string]string `json:"present_headers"`
-	Warnings             []string          `json:"warnings"`
-	CriticalIssues       []string          `json:"critical_issues"`
-	Recommendations      []string          `json:"recommendations"`
+	Subdomain       string            `json:"subdomain"`
+	Score           int               `json:"score"` // 0-10
+	Grade           string            `json:"grade"` // A+, A, B, C, D, F
+	MissingHeaders  []string          `json:"missing_headers"`
+	PresentHeaders  map[string]string `json:"present_headers"`
+	Warnings        []string          `json:"warnings"`
+	CriticalIssues  []string          `json:"critical_issues"`
+	Recommendations []string          `json:"recommendations"`
 }
 
 // Analyzer performs security header analysis
@@ -28,13 +28,13 @@ type Analyzer struct {
 }
 
 // NewAnalyzer creates a new security header analyzer
-func NewAnalyzer(timeout int) *Analyzer {
+func NewAnalyzer(timeout int, verifyTLS bool) *Analyzer {
 	return &Analyzer{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,
@@ -300,8 +300,8 @@ func (a *Analyzer) checkInformationDisclosure(resp *http.Response, analysis *Hea
 	if server != "" {
 		analysis.PresentHeaders["Server"] = server
 		if strings.Contains(strings.ToLower(server), "apache") ||
-		   strings.Contains(strings.ToLower(server), "nginx") ||
-		   strings.Contains(strings.ToLower(server), "microsoft-iis") {
+			strings.Contains(strings.ToLower(server), "nginx") ||
+			strings.Contains(strings.ToLower(server), "microsoft-iis") {
 			analysis.Warnings = append(analysis.Warnings, "Server header reveals web server technology")
 		}
 	}

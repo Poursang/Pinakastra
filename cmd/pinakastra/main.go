@@ -39,7 +39,7 @@ Author: %s
 // printBanner prints the colorful banner
 func printBanner() {
 	// Dark, attractive colors - using regular (darker) versions
-	cyan := color.New(color.FgCyan, color.Bold)      // Deep cyan for ASCII art
+	cyan := color.New(color.FgCyan, color.Bold)       // Deep cyan for ASCII art
 	magenta := color.New(color.FgMagenta, color.Bold) // Deep magenta for title
 	blue := color.New(color.FgBlue, color.Bold)       // Deep blue for subtitle
 	brightRed := color.New(color.FgHiRed, color.Bold) // Bright red for author (more visible)
@@ -81,6 +81,18 @@ var (
 
 	// Proxy flags
 	useTor bool
+
+	// Scope flags
+	scopePatterns []string
+	scopeFile     string
+	scopeDeny     []string
+	verifyTLS     bool
+
+	// Exploit-stage flags
+	exploitConcurrency int
+	identitiesFile     string
+	jwtTokens          []string
+	oobCanaryURL       string
 )
 
 var rootCmd = &cobra.Command{
@@ -119,18 +131,26 @@ var scanCmd = &cobra.Command{
 
 		// Create scan configuration
 		config := &scanner.ScanConfig{
-			Domain:        domain,
-			OutputDir:     outputDir,
-			OutputFile:    output,
-			OutputFormats: format,
-			Mode:          mode,
-			EnableAI:      enableAI,
-			Threads:       threads,
-			RateLimit:     rateLimit,
-			UseTor:        useTor,
-			NoBruteforce:  noBruteforce,
-			NoPortscan:    noPortscan,
-			Ports:         ports,
+			Domain:             domain,
+			OutputDir:          outputDir,
+			OutputFile:         output,
+			OutputFormats:      format,
+			Mode:               mode,
+			EnableAI:           enableAI,
+			Threads:            threads,
+			RateLimit:          rateLimit,
+			UseTor:             useTor,
+			NoBruteforce:       noBruteforce,
+			NoPortscan:         noPortscan,
+			Ports:              ports,
+			Scope:              scopePatterns,
+			ScopeFile:          scopeFile,
+			ScopeDeny:          scopeDeny,
+			VerifyTLS:          verifyTLS,
+			ExploitConcurrency: exploitConcurrency,
+			IdentitiesFile:     identitiesFile,
+			JWTTokens:          jwtTokens,
+			OOBCanaryURL:       oobCanaryURL,
 		}
 
 		// Create scanner and run
@@ -325,7 +345,7 @@ var updateCmd = &cobra.Command{
 					// Build ASCII progress bar: [=====> ]
 					var bar string
 					if filledWidth > 0 {
-						bar = blue(strings.Repeat("=", filledWidth-1) + ">") + strings.Repeat(" ", emptyWidth)
+						bar = blue(strings.Repeat("=", filledWidth-1)+">") + strings.Repeat(" ", emptyWidth)
 					} else {
 						bar = strings.Repeat(" ", 50)
 					}
@@ -350,7 +370,7 @@ var updateCmd = &cobra.Command{
 		updateResult.Stderr = nil
 
 		err := updateResult.Run()
-		done <- true // Stop progress bar
+		done <- true                       // Stop progress bar
 		time.Sleep(200 * time.Millisecond) // Let progress bar finish
 
 		if err != nil {
@@ -428,6 +448,18 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&useTor, "use-tor", false, "Use TOR proxy")
 	scanCmd.Flags().BoolVar(&useTor, "use-tor", false, "Use TOR proxy")
 
+	// Scope flags - the target is always in scope; these extend or restrict it
+	rootCmd.PersistentFlags().StringArrayVar(&scopePatterns, "scope", nil, "Additional in-scope pattern (repeatable): host, *.domain, or domain")
+	rootCmd.PersistentFlags().StringVar(&scopeFile, "scope-file", "", "File of in-scope patterns, one per line")
+	rootCmd.PersistentFlags().StringArrayVar(&scopeDeny, "scope-deny", nil, "Out-of-scope pattern (repeatable); deny always wins")
+	rootCmd.PersistentFlags().BoolVar(&verifyTLS, "verify-tls", true, "Verify TLS certificates on the exploit client")
+
+	// Exploit-stage flags
+	rootCmd.PersistentFlags().IntVar(&exploitConcurrency, "exploit-concurrency", 20, "Max concurrent in-flight exploit requests")
+	rootCmd.PersistentFlags().StringVar(&identitiesFile, "identities", "", "YAML file of identities (headers + own resource URL) for IDOR/authorization testing")
+	rootCmd.PersistentFlags().StringArrayVar(&jwtTokens, "jwt", nil, "JWT to analyze offline for alg:none / weak secret (repeatable)")
+	rootCmd.PersistentFlags().StringVar(&oobCanaryURL, "oob-url", "", "Base URL of an out-of-band canary (routes /c/<token> and /hits/<token>) for blind SSRF")
+
 	// Custom usage template
 	rootCmd.SetUsageTemplate(usageTemplate)
 
@@ -451,6 +483,11 @@ COMMANDS:
 REQUIRED:
   -d, --domain STRING            Target domain to scan
 
+SCOPE:
+  --scope STRING                 Additional in-scope pattern (repeatable): host, *.domain, or domain
+  --scope-file STRING            File of in-scope patterns, one per line
+  --scope-deny STRING            Out-of-scope pattern (repeatable); deny always wins
+
 AI OPTIONS:
   --enable-ai                    Enable AI-powered port scanning and deep analysis (default: false)
 
@@ -470,6 +507,13 @@ PORT SCANNING:
   -p, --ports STRING             Ports to scan (default: 80,443,8080,8443,3000,5000,8000,8888)
   --no-portscan                  Skip port scanning
 
+ACTIVE VERIFICATION (deterministic; runs without --enable-ai):
+  --verify-tls                   Verify TLS certificates on active HTTP probes (default: true)
+  --exploit-concurrency INT      Max concurrent in-flight exploit requests (default: 20)
+  --identities STRING            YAML of identities (headers + own resource URL) for IDOR testing
+  --jwt STRING                   JWT to analyze offline for alg:none / weak secret (repeatable)
+  --oob-url STRING               Base URL of an out-of-band canary for blind SSRF detection
+
 PROXY:
   --use-tor                      Use TOR proxy
 
@@ -488,6 +532,12 @@ EXAMPLES:
 
   # Custom output
   pinakastra -d target.com -o my_scan -f json,html,pdf
+
+  # Restrict active testing to an explicit scope (verification runs without AI)
+  pinakastra -d target.com --scope '*.target.com' --scope-deny prod.target.com
+
+  # Authorization, token, and blind-SSRF testing
+  pinakastra -d target.com --identities ids.yaml --jwt "$TOKEN" --oob-url https://canary.example
 
 For more information: https://github.com/who0xac/pinakastra
 `

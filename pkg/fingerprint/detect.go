@@ -28,13 +28,13 @@ type Scanner struct {
 }
 
 // NewScanner creates a new fingerprint scanner
-func NewScanner(timeout int) *Scanner {
+func NewScanner(timeout int, verifyTLS bool) *Scanner {
 	return &Scanner{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 10,

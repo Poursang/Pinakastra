@@ -31,6 +31,7 @@ import (
 	"github.com/who0xac/pinakastra/pkg/output/formatter"
 	"github.com/who0xac/pinakastra/pkg/output/terminal"
 	"github.com/who0xac/pinakastra/pkg/port"
+	"github.com/who0xac/pinakastra/pkg/scope"
 	"github.com/who0xac/pinakastra/pkg/secrets"
 	"github.com/who0xac/pinakastra/pkg/security"
 	"github.com/who0xac/pinakastra/pkg/subdomain"
@@ -44,31 +45,39 @@ import (
 
 // ScanConfig holds the configuration for a scan
 type ScanConfig struct {
-	Domain        string
-	OutputDir     string
-	OutputFile    string
-	OutputFormats string
-	Mode          string
-	EnableAI      bool
-	Threads       int
-	RateLimit     int
-	UseTor        bool
-	NoBruteforce  bool
-	NoPortscan    bool
-	Ports         string
+	Domain             string
+	OutputDir          string
+	OutputFile         string
+	OutputFormats      string
+	Mode               string
+	EnableAI           bool
+	Threads            int
+	RateLimit          int
+	UseTor             bool
+	NoBruteforce       bool
+	NoPortscan         bool
+	Ports              string
+	Scope              []string // additional in-scope patterns (host, *.domain, domain)
+	ScopeFile          string   // file of in-scope patterns, one per line
+	ScopeDeny          []string // out-of-scope patterns; deny always wins
+	VerifyTLS          bool     // verify TLS certs on the exploit client
+	ExploitConcurrency int      // max concurrent in-flight exploit requests
+	IdentitiesFile     string   // YAML of identities for IDOR/authorization testing
+	JWTTokens          []string // JWTs to analyze offline for alg:none / weak secret
+	OOBCanaryURL       string   // base URL of an out-of-band canary for blind SSRF
 }
 
 // Scanner handles the full scanning workflow
 type Scanner struct {
-	Config           *ScanConfig
-	ctx              context.Context
-	cancel           context.CancelFunc
-	termCapture      *utils.TerminalCapture
-	scanResult       *formatter.ScanResult
-	startTime        time.Time
-	interruptCount   int32          // Atomic counter for Ctrl+C presses
-	lastInterruptTime time.Time      // Time of last interrupt
-	skipPhase        chan struct{}  // Channel to signal phase skip
+	Config            *ScanConfig
+	ctx               context.Context
+	cancel            context.CancelFunc
+	termCapture       *utils.TerminalCapture
+	scanResult        *formatter.ScanResult
+	startTime         time.Time
+	interruptCount    int32         // Atomic counter for Ctrl+C presses
+	lastInterruptTime time.Time     // Time of last interrupt
+	skipPhase         chan struct{} // Channel to signal phase skip
 }
 
 // Color helpers
@@ -82,14 +91,14 @@ func NewScanner(config *ScanConfig) *Scanner {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	scanner := &Scanner{
-		Config:           config,
-		ctx:              ctx,
-		cancel:           cancel,
-		termCapture:      utils.NewTerminalCapture(),
-		startTime:        time.Now(),
-		interruptCount:   0,
+		Config:            config,
+		ctx:               ctx,
+		cancel:            cancel,
+		termCapture:       utils.NewTerminalCapture(),
+		startTime:         time.Now(),
+		interruptCount:    0,
 		lastInterruptTime: time.Time{},
-		skipPhase:        make(chan struct{}, 1),
+		skipPhase:         make(chan struct{}, 1),
 	}
 
 	// Set up signal handling for Ctrl+C
@@ -196,6 +205,36 @@ func (s *Scanner) Run() error {
 		}
 	}
 
+	// Scope gate for active recon: drop any discovered host outside the
+	// engagement boundary before it is probed, resolved, crawled, or port
+	// scanned. The target is always in scope; --scope/--scope-file widen it.
+	// The exploitation phase enforces this again as defense in depth.
+	if len(subdomains) > 0 {
+		matcher, mErr := s.buildScopeMatcher()
+		if mErr != nil {
+			return mErr
+		}
+		inScope := make([]string, 0, len(subdomains))
+		for _, h := range subdomains {
+			if matcher.InScope(h) {
+				inScope = append(inScope, h)
+			}
+		}
+		if dropped := len(subdomains) - len(inScope); dropped > 0 {
+			fmt.Printf("%s %s\n", terminal.Yellow("⚠"),
+				terminal.Gray(fmt.Sprintf("Scope: dropped %d out-of-scope host(s) from recon", dropped)))
+			s.log(fmt.Sprintf("Scope: dropped %d out-of-scope host(s) from recon", dropped))
+		}
+		subdomains = inScope
+		// Rewrite the subdomain file so downstream tools that read it (httpx
+		// and the rest) only ever see in-scope hosts.
+		if err := writeLinesToFile(filepath.Join(outputPath, "all_subdomains.txt"), subdomains); err != nil {
+			return fmt.Errorf("failed to rewrite in-scope subdomains: %v", err)
+		}
+		s.scanResult.Subdomains.Subdomains = subdomains
+		s.scanResult.Subdomains.UniqueCount = len(subdomains)
+	}
+
 	// Phase 2: HTTP Probing
 	if !s.shouldSkipPhase() {
 		_, err = s.runHTTPProbing(outputPath, subdomains)
@@ -227,38 +266,23 @@ func (s *Scanner) Run() error {
 		}
 	}
 
-	// Exit early if AI is disabled (Port scanning requires AI)
-	if !s.Config.EnableAI {
-		// Finalize metadata and generate outputs before exiting
-		s.scanResult.Metadata.EndTime = time.Now()
-		s.scanResult.Metadata.Duration = s.scanResult.Metadata.EndTime.Sub(s.startTime).String()
-		s.scanResult.TerminalOutput = s.termCapture.GetLines()
-
-		if err := s.generateOutputs(outputPath); err != nil {
-			return fmt.Errorf("failed to generate outputs: %v", err)
+	// Phase 6: Port Scanning with AI analysis. This is the only phase that
+	// needs a model, so it stays behind --enable-ai (optional, skip with
+	// --no-portscan).
+	if s.Config.EnableAI {
+		if !s.Config.NoPortscan && !s.shouldSkipPhase() {
+			if err := s.runPortScan(outputPath); err != nil {
+				s.log(fmt.Sprintf("Port scan warning: %v", err))
+			}
 		}
-
-		fmt.Println()
-		terminal.PrintSectionDivider()
-		terminal.PrintSuccess(fmt.Sprintf("Scan completed! Results saved to: %s", outputPath))
-		terminal.PrintInfo("Web Security Analysis completed (100% verified data)")
-		terminal.PrintInfo("AI is disabled. Skipped: Port Scanning and AI Analysis")
-		terminal.PrintInfo("Enable with --enable-ai for AI-powered port scanning and deep analysis")
-
-		terminal.PrintSectionDivider()
-		fmt.Println()
-		return nil
+	} else {
+		terminal.PrintInfo("AI disabled: skipping AI-powered port scanning (enable with --enable-ai)")
 	}
 
-	// Phase 6: Port Scanning (requires AI, optional, skip if --no-portscan)
-	if !s.Config.NoPortscan && !s.shouldSkipPhase() {
-		if err := s.runPortScan(outputPath); err != nil {
-			s.log(fmt.Sprintf("Port scan warning: %v", err))
-		}
-	}
-
-	// Phase 7: Active Exploitation (requires AI)
-	if s.Config.EnableAI && !s.shouldSkipPhase() {
+	// Phase 7: Active Exploitation. The oracles confirm findings
+	// deterministically and use no model, so this runs regardless of
+	// --enable-ai.
+	if !s.shouldSkipPhase() {
 		if err := s.runActiveExploitation(outputPath); err != nil {
 			s.log(fmt.Sprintf("Active exploitation warning: %v", err))
 		}
@@ -392,7 +416,6 @@ func (s *Scanner) runHTTPProbing(outputPath string, subdomains []string) ([]stri
 	}
 	s.scanResult.HTTPProbe.LiveURLs = liveURLs
 
-
 	return result.LiveURLs, nil
 }
 
@@ -461,7 +484,6 @@ func (s *Scanner) runIPResolution(outputPath string) (map[string][]string, error
 		}
 	}
 
-
 	// Print completion summary
 	fmt.Println()
 	terminal.PrintSectionDivider()
@@ -469,7 +491,6 @@ func (s *Scanner) runIPResolution(outputPath string) (map[string][]string, error
 	terminal.PrintSuccess(fmt.Sprintf("IP Resolution completed in %s", duration.Round(time.Second)))
 	terminal.PrintInfo(fmt.Sprintf("Resolved %d unique IPs", len(result.ResolvedIPs)))
 	fmt.Println()
-
 
 	return result.ResolvedIPs, nil
 }
@@ -533,20 +554,19 @@ func (s *Scanner) runURLDiscovery(outputPath string) ([]string, error) {
 
 	_ = phaseStart
 
-
 	return urls, nil
 }
 
 // subdomainAnalysisResult holds all analysis results for a subdomain
 type subdomainAnalysisResult struct {
-	subdomain        string
-	info             terminal.SubdomainInfo
-	findings         int
-	criticalCount    int
-	highCount        int
-	moderateCount    int
-	lowCount         int
-	output           []string // Buffered output lines
+	subdomain     string
+	info          terminal.SubdomainInfo
+	findings      int
+	criticalCount int
+	highCount     int
+	moderateCount int
+	lowCount      int
+	output        []string // Buffered output lines
 }
 
 // testResult holds individual test results
@@ -1088,11 +1108,27 @@ func (s *Scanner) runPortScan(outputPath string) error {
 	s.log(fmt.Sprintf("Port scan completed: %d open ports, %d vulnerabilities found",
 		result.OpenPorts, totalVulns))
 
-
 	return nil
 }
 
-// runActiveExploitation runs Phase 7: Active Exploitation with AI
+// buildScopeMatcher constructs the engagement scope from config: the target is
+// always in scope, --scope and --scope-file widen it, --scope-deny restricts
+// it (deny wins). Shared by the recon gate and the exploitation gate so both
+// enforce exactly the same boundary.
+func (s *Scanner) buildScopeMatcher() (*scope.Matcher, error) {
+	allow := append([]string{}, s.Config.Scope...)
+	if s.Config.ScopeFile != "" {
+		filePatterns, err := scope.LoadPatterns(s.Config.ScopeFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read scope file %q: %v", s.Config.ScopeFile, err)
+		}
+		allow = append(allow, filePatterns...)
+	}
+	return scope.New(s.Config.Domain, allow, s.Config.ScopeDeny), nil
+}
+
+// runActiveExploitation runs Phase 7: Active Exploitation. Confirmation is
+// deterministic and uses no model, so it does not depend on --enable-ai.
 func (s *Scanner) runActiveExploitation(outputPath string) error {
 	terminal.PrintSectionHeader("ACTIVE EXPLOITATION")
 
@@ -1131,21 +1167,46 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 		urlsBySubdomain[subdomain] = append(urlsBySubdomain[subdomain], line)
 	}
 
+	// Scope gate: active payloads may only be sent to in-scope hosts.
+	// Recon can discover far more than the engagement authorizes, so any
+	// host not matched by the scope is dropped here, before testing.
+	matcher, err := s.buildScopeMatcher()
+	if err != nil {
+		return err
+	}
+
+	skipped := 0
+	for host := range urlsBySubdomain {
+		if !matcher.InScope(host) {
+			delete(urlsBySubdomain, host)
+			skipped++
+			s.log(fmt.Sprintf("Active exploitation refused for out-of-scope host: %s", host))
+		}
+	}
+	if skipped > 0 {
+		fmt.Printf("%s %s\n", terminal.Yellow("⚠"),
+			terminal.Gray(fmt.Sprintf("Scope: skipped %d out-of-scope host(s)", skipped)))
+	}
+
 	if len(urlsBySubdomain) == 0 {
-		terminal.PrintWarning("No valid URLs found - skipping active exploitation")
-		s.log("Active exploitation skipped: no valid URLs")
+		terminal.PrintWarning("No in-scope URLs found - skipping active exploitation")
+		s.log("Active exploitation skipped: no in-scope URLs")
 		return nil
 	}
 
-	// Check if Ollama is running, start if needed
-	s.ensureOllamaRunning()
-
-	// Initialize exploit scanner with faster timeout and smaller model for 8GB RAM
+	// Initialize exploit scanner. Confirmation is deterministic, so no model or
+	// Ollama is needed here; request rate, in-flight concurrency, and TLS
+	// verification come from config so the scan stays within the configured
+	// limits instead of the previous hardcoded, unlimited client.
 	exploitScanner := exploit.NewScanner(
 		7, // timeout in seconds (reduced for faster scanning)
-		"deepseek-r1:7b", // 7b model uses 6-7GB RAM (vs 8b which needs 8-10GB)
-		"http://localhost:11434",
+		s.Config.RateLimit,
+		s.Config.ExploitConcurrency,
+		s.Config.VerifyTLS,
 	)
+	if s.Config.OOBCanaryURL != "" {
+		exploitScanner.SetOOB(exploit.NewHTTPCanary(s.Config.OOBCanaryURL, nil))
+	}
 
 	// Create exploits output directory
 	exploitsDir := filepath.Join(outputPath, "exploits")
@@ -1232,6 +1293,70 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 
 	fmt.Printf("   ─────────────────────────────────────────────────────────────────────────────\n\n")
 
+	// Identity-based IDOR: when identities are configured, confirm broken
+	// object-level authorization by cross-identity access. This is the honest
+	// replacement for the old unauthenticated IDOR guessing, which could not
+	// tell an IDOR from an ordinary 200.
+	if s.Config.IdentitiesFile != "" {
+		identities, idErr := exploit.LoadIdentities(s.Config.IdentitiesFile)
+		switch {
+		case idErr != nil:
+			s.log(fmt.Sprintf("IDOR: failed to load identities: %v", idErr))
+		case len(identities) < 2:
+			s.log("IDOR: need at least two identities; skipping")
+		default:
+			for _, r := range exploitScanner.RunIDOR(s.ctx, identities) {
+				host := ""
+				if u, perr := url.Parse(r.Resource); perr == nil {
+					host = u.Host
+				}
+				allExploits = append(allExploits, exploit.Exploit{
+					Subdomain: host,
+					URL:       r.Resource,
+					VulnType:  exploit.VulnIDOR,
+					Severity:  "high",
+					Payload:   "cross-identity access: " + r.Accessor + " read " + r.Owner + "'s object",
+					Method:    "GET",
+					Evidence:  r.Evidence,
+					Impact:    "Broken object-level authorization; a user can access another user's data",
+					Verified:  true,
+				})
+			}
+		}
+	}
+
+	// Offline JWT analysis: flag alg:none and weak/guessable HMAC secrets in
+	// any tokens supplied with --jwt. These are properties of the token itself,
+	// so no request is made; server-side acceptance of a forged token is a
+	// separate active check not done here.
+	for _, tok := range s.Config.JWTTokens {
+		for _, f := range exploit.AnalyzeJWT(tok) {
+			allExploits = append(allExploits, exploit.Exploit{
+				VulnType: exploit.VulnJWT,
+				Severity: f.Severity,
+				Payload:  "offline JWT analysis",
+				Method:   "-",
+				Evidence: f.Issue + ": " + f.Evidence,
+				Impact:   "Token integrity can be bypassed; an attacker can forge valid tokens",
+				Verified: true,
+			})
+		}
+	}
+
+	// Surface confirmed findings in the main report, not only in exploits/.
+	for _, e := range allExploits {
+		s.scanResult.Findings = append(s.scanResult.Findings, formatter.Finding{
+			Subdomain: e.Subdomain,
+			URL:       e.URL,
+			Type:      string(e.VulnType),
+			Severity:  e.Severity,
+			Verified:  e.Verified,
+			Evidence:  e.Evidence,
+			Payload:   e.Payload,
+			Impact:    e.Impact,
+		})
+	}
+
 	// Generate exploit files
 	if len(allExploits) > 0 {
 		if err := exploit.GenerateExploitFiles(allExploits, exploitsDir); err != nil {
@@ -1248,7 +1373,6 @@ func (s *Scanner) runActiveExploitation(outputPath string) error {
 	if len(allExploits) > 0 {
 		fmt.Printf("\n%s Exploit reports saved to: %s\n", terminal.Blue("ℹ"), terminal.Cyan(exploitsDir))
 	}
-
 
 	return nil
 }
@@ -1494,13 +1618,12 @@ func (s *Scanner) runPhase7DeepAIAnalysis(outputPath string, subdomains []string
 	terminal.PrintSectionDivider()
 	fmt.Println()
 
-
 	return nil
 }
 
 // runTechnologyFingerprinting performs technology fingerprinting
 func (s *Scanner) runTechnologyFingerprinting(subdomains []string) map[string][]fingerprint.Technology {
-	scanner := fingerprint.NewScanner(10)
+	scanner := fingerprint.NewScanner(10, s.Config.VerifyTLS)
 	results := make(map[string][]fingerprint.Technology)
 
 	for _, subdomain := range subdomains {
@@ -1521,7 +1644,7 @@ func (s *Scanner) runTechnologyFingerprinting(subdomains []string) map[string][]
 
 // runSecurityHeadersAnalysis performs security headers analysis
 func (s *Scanner) runSecurityHeadersAnalysis(subdomains []string) map[string]*security.HeaderAnalysis {
-	analyzer := security.NewAnalyzer(10)
+	analyzer := security.NewAnalyzer(10, s.Config.VerifyTLS)
 	results := make(map[string]*security.HeaderAnalysis)
 
 	for _, subdomain := range subdomains {
@@ -1563,7 +1686,7 @@ func (s *Scanner) runTLSAnalysis(subdomains []string) map[string]*tls.Analysis {
 
 // runTakeoverDetection performs subdomain takeover detection
 func (s *Scanner) runTakeoverDetection(subdomains []string) []takeover.Vulnerability {
-	checker := takeover.NewChecker(5) // Reduced from 10s to 5s
+	checker := takeover.NewChecker(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	var vulns []takeover.Vulnerability
 
 	for _, subdomain := range subdomains {
@@ -1584,13 +1707,13 @@ func (s *Scanner) runTakeoverDetection(subdomains []string) []takeover.Vulnerabi
 
 // runCloudDiscovery performs cloud asset discovery
 func (s *Scanner) runCloudDiscovery() []cloud.Asset {
-	scanner := cloud.NewScanner(s.Config.Domain, 2) // Reduced to 2s for faster scanning
+	scanner := cloud.NewScanner(s.Config.Domain, 2, s.Config.VerifyTLS) // Reduced to 2s for faster scanning
 	return scanner.ScanAll(s.ctx)
 }
 
 // runAPIDiscovery performs API intelligence discovery
 func (s *Scanner) runAPIDiscovery(subdomains []string) map[string][]api.Finding {
-	scanner := api.NewScanner(5) // Reduced from 10s to 5s
+	scanner := api.NewScanner(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]api.Finding)
 
 	for _, subdomain := range subdomains {
@@ -1611,7 +1734,7 @@ func (s *Scanner) runAPIDiscovery(subdomains []string) map[string][]api.Finding 
 
 // runCORSDetection performs CORS misconfiguration detection
 func (s *Scanner) runCORSDetection(subdomains []string) map[string][]cors.Issue {
-	checker := cors.NewChecker(5) // Reduced from 10s to 5s
+	checker := cors.NewChecker(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]cors.Issue)
 
 	for _, subdomain := range subdomains {
@@ -1632,7 +1755,7 @@ func (s *Scanner) runCORSDetection(subdomains []string) map[string][]cors.Issue 
 
 // runSecretsScanning performs JS secrets scanning
 func (s *Scanner) runSecretsScanning(subdomains []string) map[string][]secrets.Finding {
-	scanner := secrets.NewScanner(5) // Reduced from 10s to 5s
+	scanner := secrets.NewScanner(5, s.Config.VerifyTLS) // Reduced from 10s to 5s
 	results := make(map[string][]secrets.Finding)
 
 	for _, subdomain := range subdomains {
@@ -1939,7 +2062,7 @@ func (s *Scanner) runAISecurityAnalysis(outputPath string, securityResults map[s
 		}
 
 		resultText := fmt.Sprintf(
-			"[%s] %s - %s\nRisk: %s\nExploitability: %s\nCVEs: %s\n",
+			"[%s] %s\nRisk: %s\nExploitability: %s\nCVEs: %s\n",
 			result.Finding.Type,
 			result.Finding.Subdomain,
 			result.RiskLevel,
@@ -2001,21 +2124,21 @@ func (s *Scanner) shutdownOllama() {
 
 // SubdomainSecurityData holds all security check results for a subdomain
 type SubdomainSecurityData struct {
-	Subdomain       string
-	StatusCode      int
-	HeadersGrade    string
-	MissingHeaders  []string
-	HeadersRisk     string
-	TLSVulns        []string
-	TLSRisk         string
-	TakeoverVuln    *takeover.Vulnerability
-	TakeoverRisk    string
-	CloudAssets     []cloud.Asset
-	CloudRisk       string
-	CORSIssues      []cors.Issue
-	CORSRisk        string
-	Secrets         []secrets.Finding
-	SecretsRisk     string
+	Subdomain      string
+	StatusCode     int
+	HeadersGrade   string
+	MissingHeaders []string
+	HeadersRisk    string
+	TLSVulns       []string
+	TLSRisk        string
+	TakeoverVuln   *takeover.Vulnerability
+	TakeoverRisk   string
+	CloudAssets    []cloud.Asset
+	CloudRisk      string
+	CORSIssues     []cors.Issue
+	CORSRisk       string
+	Secrets        []secrets.Finding
+	SecretsRisk    string
 }
 
 // runIntegratedSecurityAnalysis runs security checks grouped by subdomain with real-time AI analysis
@@ -2537,6 +2660,9 @@ func (s *Scanner) getTLSAltNames(domain string) ([]string, error) {
 	}
 
 	conn, err := cryptotls.DialWithDialer(dialer, "tcp", domain+":443", &cryptotls.Config{
+		// Connectivity/cert-grab probe: we test reachability and read the
+		// certificate, we do not trust it, so verification is intentionally
+		// skipped here regardless of --verify-tls.
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
@@ -2576,7 +2702,7 @@ func (s *Scanner) getTechStack(domain string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	scanner := fingerprint.NewScanner(1)
+	scanner := fingerprint.NewScanner(1, s.Config.VerifyTLS)
 	techs := scanner.DetectTechnologies(ctx, "https://"+domain)
 
 	if len(techs) == 0 {

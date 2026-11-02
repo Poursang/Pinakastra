@@ -12,10 +12,10 @@ import (
 // Issue represents a CORS misconfiguration
 type Issue struct {
 	Subdomain   string   `json:"subdomain"`
-	Type        string   `json:"type"`        // wildcard, credentials, null_origin, etc.
-	Severity    string   `json:"severity"`    // critical, high, medium, low
+	Type        string   `json:"type"`     // wildcard, credentials, null_origin, etc.
+	Severity    string   `json:"severity"` // critical, high, medium, low
 	Description string   `json:"description"`
-	Headers     []string `json:"headers"`     // Problematic headers
+	Headers     []string `json:"headers"` // Problematic headers
 	Evidence    string   `json:"evidence"`
 }
 
@@ -26,13 +26,13 @@ type Checker struct {
 }
 
 // NewChecker creates a new CORS checker
-func NewChecker(timeout int) *Checker {
+func NewChecker(timeout int, verifyTLS bool) *Checker {
 	return &Checker{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,
@@ -58,7 +58,7 @@ func (c *Checker) CheckSubdomain(ctx context.Context, subdomain string) []Issue 
 		"https://evil.com",
 		"https://attacker.com",
 		"null",
-		"https://"+subdomain+".evil.com",
+		"https://" + subdomain + ".evil.com",
 	}
 
 	urls := []string{

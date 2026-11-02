@@ -18,9 +18,9 @@ type Finding struct {
 	Match       string `json:"match"`
 	Severity    string `json:"severity"`
 	Description string `json:"description"`
-	Source      string `json:"source"`       // URL where found
-	LineNumber  int    `json:"line_number"`  // Line number in file
-	Context     string `json:"context"`      // Surrounding context
+	Source      string `json:"source"`      // URL where found
+	LineNumber  int    `json:"line_number"` // Line number in file
+	Context     string `json:"context"`     // Surrounding context
 }
 
 // Scanner performs secret scanning
@@ -30,7 +30,7 @@ type Scanner struct {
 }
 
 // NewScanner creates a new secrets scanner
-func NewScanner(timeout int) *Scanner {
+func NewScanner(timeout int, verifyTLS bool) *Scanner {
 	CompilePatterns() // Compile patterns on initialization
 
 	return &Scanner{
@@ -38,7 +38,7 @@ func NewScanner(timeout int) *Scanner {
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,

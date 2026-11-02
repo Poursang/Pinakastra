@@ -14,10 +14,10 @@ import (
 
 // Finding represents an API discovery finding
 type Finding struct {
-	Type        string   `json:"type"`        // graphql, swagger, openapi, rest
+	Type        string   `json:"type"` // graphql, swagger, openapi, rest
 	URL         string   `json:"url"`
 	Endpoints   []string `json:"endpoints,omitempty"`
-	Issue       string   `json:"issue"`       // introspection_enabled, exposed_docs, etc.
+	Issue       string   `json:"issue"` // introspection_enabled, exposed_docs, etc.
 	Severity    string   `json:"severity"`
 	Description string   `json:"description"`
 }
@@ -29,13 +29,13 @@ type Scanner struct {
 }
 
 // NewScanner creates a new API scanner
-func NewScanner(timeout int) *Scanner {
+func NewScanner(timeout int, verifyTLS bool) *Scanner {
 	return &Scanner{
 		client: &http.Client{
 			Timeout: time.Duration(timeout) * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: !verifyTLS,
 				},
 				MaxIdleConns:        50,
 				MaxIdleConnsPerHost: 10,
@@ -282,10 +282,10 @@ func (s *Scanner) checkSwagger(ctx context.Context, subdomain string) []Finding 
 
 				// Check for sensitive information
 				if strings.Contains(bodyStr, "password") ||
-				   strings.Contains(bodyStr, "secret") ||
-				   strings.Contains(bodyStr, "token") ||
-				   strings.Contains(bodyStr, "api_key") ||
-				   strings.Contains(bodyStr, "apiKey") {
+					strings.Contains(bodyStr, "secret") ||
+					strings.Contains(bodyStr, "token") ||
+					strings.Contains(bodyStr, "api_key") ||
+					strings.Contains(bodyStr, "apiKey") {
 					finding.Severity = "high"
 					finding.Description += " (may contain sensitive parameter information)"
 				}
