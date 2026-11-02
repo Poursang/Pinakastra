@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # The binary lives under ./cmd/pinakastra; the repo-root package embeds a
+      # wordlist that is downloaded at install time and is not part of the
+      # build, so CI targets ./pkg/... and ./cmd/... rather than ./...
+      - name: Vet
+        run: go vet ./pkg/... ./cmd/...
+
+      - name: Test
+        run: go test ./pkg/... ./cmd/...
+
+      - name: Test (race)
+        run: go test -race ./pkg/exploit/ ./pkg/scope/
+
+      - name: Build
+        run: go build ./cmd/...

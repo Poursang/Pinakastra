@@ -559,25 +559,27 @@ func (s *Scanner) runURLDiscovery(outputPath string) ([]string, error) {
 
 // subdomainAnalysisResult holds all analysis results for a subdomain
 type subdomainAnalysisResult struct {
-	subdomain     string
-	info          terminal.SubdomainInfo
-	findings      int
-	criticalCount int
-	highCount     int
-	moderateCount int
-	lowCount      int
-	output        []string // Buffered output lines
+	subdomain      string
+	info           terminal.SubdomainInfo
+	findings       int
+	criticalCount  int
+	highCount      int
+	moderateCount  int
+	lowCount       int
+	output         []string            // Buffered output lines
+	reportFindings []formatter.Finding // Confirmed findings for the main report
 }
 
 // testResult holds individual test results
 type testResult struct {
-	name          string
-	output        string
-	findings      int
-	criticalCount int
-	highCount     int
-	moderateCount int
-	lowCount      int
+	name           string
+	output         string
+	findings       int
+	criticalCount  int
+	highCount      int
+	moderateCount  int
+	lowCount       int
+	reportFindings []formatter.Finding // Confirmed findings for the main report
 }
 
 // runWebSecurityAnalysis runs Phase 4: Web Security Analysis (NO AI) with parallel processing
@@ -624,6 +626,9 @@ func (s *Scanner) runWebSecurityAnalysis(outputPath string, subdomains []string)
 		highCount += result.highCount
 		moderateCount += result.moderateCount
 		lowCount += result.lowCount
+
+		// Collect confirmed findings for the main report (single-threaded here).
+		s.scanResult.Findings = append(s.scanResult.Findings, result.reportFindings...)
 	}
 
 	// Print final summary
@@ -812,6 +817,14 @@ func (s *Scanner) analyzeSubdomainWorker(jobs <-chan string, results chan<- *sub
 					maxRisk := "LOW"
 					for _, issue := range issues {
 						issueDescriptions = append(issueDescriptions, issue.Description)
+						tr.reportFindings = append(tr.reportFindings, formatter.Finding{
+							Subdomain: subdomain,
+							URL:       "https://" + subdomain,
+							Type:      "CORS: " + issue.Type,
+							Severity:  issue.Severity,
+							Verified:  true,
+							Evidence:  issue.Description + " — " + issue.Evidence,
+						})
 						severity := strings.ToUpper(issue.Severity)
 						if severity == "CRITICAL" {
 							maxRisk = "CRITICAL"
@@ -883,6 +896,7 @@ func (s *Scanner) analyzeSubdomainWorker(jobs <-chan string, results chan<- *sub
 			result.highCount += tr.highCount
 			result.moderateCount += tr.moderateCount
 			result.lowCount += tr.lowCount
+			result.reportFindings = append(result.reportFindings, tr.reportFindings...)
 		}
 
 		buf.WriteString("\n")
